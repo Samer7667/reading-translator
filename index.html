@@ -54,7 +54,7 @@
 
     .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0a1221;border:1px solid rgba(255,255,255,.1);padding:10px 12px;border-radius:12px;display:none;z-index:50}
 
-    .floating{position:absolute;z-index:40;min-width:260px;background:#0a1221;border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.5);padding:12px;display:none}
+    .floating{position:absolute;z-index:40;min-width:260px;background:#0a1221;border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.5);padding:12px;display:none;cursor:move;}
     .floating h4{margin:0 0 8px 0;font-size:14px;color:var(--muted)}
 
     /* Drawer */
@@ -68,6 +68,16 @@
     th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:8px 6px;text-align:left}
     td.actions{white-space:nowrap}
     .tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#11203a;color:var(--muted);font-size:12px}
+    
+    /* Quiz styles */
+    .quiz-option.correct {
+      background: var(--acc2) !important;
+      color: #071225 !important;
+    }
+    .quiz-option.wrong {
+      background: var(--danger) !important;
+      color: white !important;
+    }
   </style>
 </head>
 <body>
@@ -140,6 +150,26 @@
         <thead><tr><th>English</th><th style="direction:rtl">العربية</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
+      
+      <!-- Quiz Section -->
+      <div id="quizSection" style="margin-top: 30px; display: none;">
+        <h3>🧠 اختبار الكلمات</h3>
+        <div id="quizContainer" style="background: var(--panel); border-radius: 12px; padding: 16px; margin: 12px 0;">
+          <div id="quizQuestion" style="font-size: 18px; margin-bottom: 16px;"></div>
+          <div id="quizOptions" style="display: grid; gap: 8px;"></div>
+        </div>
+        <div id="quizFeedback" style="margin: 12px 0; font-weight: bold;"></div>
+        <div class="row">
+          <button id="startQuiz" class="btn">بدء اختبار جديد</button>
+          <button id="nextQuestion" class="btn secondary" style="display: none;">السؤال التالي</button>
+        </div>
+        <div id="quizStats" style="margin-top: 12px; font-size: 14px;"></div>
+      </div>
+      
+      <div class="row" style="margin-top: 16px;">
+        <button id="toggleQuiz" class="btn">عرض اختبار الكلمات</button>
+      </div>
+      
       <div class="muted" style="font-size:12px;margin-top:10px">يتم الحفظ محليًا في المتصفح (localStorage). يمكنك التصدير/الاستيراد كملف JSON.</div>
     </aside>
   </div>
@@ -210,6 +240,30 @@
     const delBtn = document.getElementById('deleteWord');
     const closeFloat = document.getElementById('closeFloat');
 
+    // Floating panel dragging functionality
+    let isDragging = false;
+    let offsetX, offsetY;
+
+    float.addEventListener('mousedown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+      isDragging = true;
+      offsetX = e.clientX - float.getBoundingClientRect().left;
+      offsetY = e.clientY - float.getBoundingClientRect().top;
+      float.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      float.style.left = (e.clientX - offsetX) + 'px';
+      float.style.top = (e.clientY - offsetY) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+      float.style.cursor = '';
+    });
+
     function onWordClick(el){
       const key = el.dataset.key;
       openFloatFor(key, el.getBoundingClientRect());
@@ -271,9 +325,25 @@
     const btnReview = document.getElementById('btnReview');
     const search = document.getElementById('search');
     const tableBody = document.querySelector('#table tbody');
+    const toggleQuiz = document.getElementById('toggleQuiz');
+    const quizSection = document.getElementById('quizSection');
 
-    btnReview.addEventListener('click', ()=> drawer.classList.add('open'));
+    btnReview.addEventListener('click', ()=> {
+      drawer.classList.add('open');
+      quizSection.style.display = 'none';
+    });
     drawer.querySelectorAll('[data-close]').forEach(el=> el.addEventListener('click', ()=> drawer.classList.remove('open')));
+
+    toggleQuiz.addEventListener('click', () => {
+      if (quizSection.style.display === 'none') {
+        quizSection.style.display = 'block';
+        toggleQuiz.textContent = 'عرض جدول الكلمات';
+        startNewQuiz();
+      } else {
+        quizSection.style.display = 'none';
+        toggleQuiz.textContent = 'عرض اختبار الكلمات';
+      }
+    });
 
     function updateTable(){
       const q = search.value.trim().toLowerCase();
@@ -301,6 +371,133 @@
       });
     }
     search.addEventListener('input', updateTable);
+
+    // ================= Quiz System =================
+    const quizContainer = document.getElementById('quizContainer');
+    const quizQuestion = document.getElementById('quizQuestion');
+    const quizOptions = document.getElementById('quizOptions');
+    const quizFeedback = document.getElementById('quizFeedback');
+    const startQuiz = document.getElementById('startQuiz');
+    const nextQuestion = document.getElementById('nextQuestion');
+    const quizStats = document.getElementById('quizStats');
+
+    let quizWords = [];
+    let currentQuizIndex = 0;
+    let correctAnswers = 0;
+    let quizInProgress = false;
+
+    startQuiz.addEventListener('click', startNewQuiz);
+    nextQuestion.addEventListener('click', showNextQuestion);
+
+    function startNewQuiz() {
+      const words = Object.entries(state.words);
+      if (words.length < 4) {
+        showToast('تحتاج إلى 4 كلمات على الأقل لبدء الاختبار');
+        return;
+      }
+      
+      // اختيار 10 كلمات عشوائية (أو أقل إذا كانت الكلمات أقل من 10)
+      quizWords = shuffleArray([...words]).slice(0, Math.min(10, words.length));
+      currentQuizIndex = 0;
+      correctAnswers = 0;
+      quizInProgress = true;
+      
+      quizFeedback.textContent = '';
+      quizStats.textContent = '';
+      nextQuestion.style.display = 'none';
+      
+      showQuestion();
+    }
+
+    function showQuestion() {
+      if (currentQuizIndex >= quizWords.length) {
+        endQuiz();
+        return;
+      }
+      
+      const [word, translation] = quizWords[currentQuizIndex];
+      quizQuestion.textContent = `ما معنى "${word}"؟`;
+      
+      // إنشاء 4 خيارات (الإجابة الصحيحة + 3 عشوائية)
+      const correctOption = translation;
+      const otherOptions = [];
+      const allTranslations = Object.values(state.words).filter(t => t !== correctOption);
+      
+      while (otherOptions.length < 3 && otherOptions.length < allTranslations.length) {
+        const randomIndex = Math.floor(Math.random() * allTranslations.length);
+        const option = allTranslations[randomIndex];
+        if (!otherOptions.includes(option)) {
+          otherOptions.push(option);
+        }
+      }
+      
+      const options = shuffleArray([correctOption, ...otherOptions]);
+      quizOptions.innerHTML = '';
+      
+      options.forEach((option, index) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn secondary';
+        btn.style.width = '100%';
+        btn.style.textAlign = 'right';
+        btn.style.direction = 'rtl';
+        btn.textContent = option;
+        btn.addEventListener('click', () => checkAnswer(option, correctOption, btn));
+        quizOptions.appendChild(btn);
+      });
+      
+      quizStats.textContent = `السؤال ${currentQuizIndex + 1} من ${quizWords.length} | الإجابات الصحيحة: ${correctAnswers}`;
+    }
+
+    function checkAnswer(selected, correct, button) {
+      if (!quizInProgress) return;
+      
+      if (selected === correct) {
+        button.className = 'btn';
+        button.style.backgroundColor = 'var(--acc2)';
+        quizFeedback.textContent = '✅ إجابة صحيحة!';
+        correctAnswers++;
+      } else {
+        button.className = 'btn danger';
+        quizFeedback.textContent = `❌ إجابة خاطئة! الإجابة الصحيحة: ${correct}`;
+      }
+      
+      // تعطيل جميع الأزرار بعد الإجابة
+      Array.from(quizOptions.children).forEach(btn => {
+        btn.disabled = true;
+        if (btn.textContent === correct) {
+          btn.className = 'btn';
+          btn.style.backgroundColor = 'var(--acc2)';
+        }
+      });
+      
+      nextQuestion.style.display = 'block';
+    }
+
+    function showNextQuestion() {
+      currentQuizIndex++;
+      nextQuestion.style.display = 'none';
+      quizFeedback.textContent = '';
+      showQuestion();
+    }
+
+    function endQuiz() {
+      quizInProgress = false;
+      quizQuestion.textContent = 'الاختبار انتهى!';
+      quizOptions.innerHTML = '';
+      quizFeedback.textContent = `🎉 لقد أجبت بشكل صحيح على ${correctAnswers} من ${quizWords.length} أسئلة!`;
+      quizStats.textContent = `النسبة: ${Math.round((correctAnswers / quizWords.length) * 100)}%`;
+      nextQuestion.style.display = 'none';
+    }
+
+    // دالة لخلط العناصر في مصفوفة
+    function shuffleArray(array) {
+      const newArray = [...array];
+      for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+      }
+      return newArray;
+    }
 
     // ================= Import / Export =================
     const btnExport = document.getElementById('btnExport');
